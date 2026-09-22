@@ -1,0 +1,43 @@
+// Generated from raft.proto
+
+namespace raft.fb;
+
+enum EntryType : int {
+  ENTRY_TYPE_UNKNOWN = 0,
+  ENTRY_TYPE_NO_OP = 1,
+  ENTRY_TYPE_DATA = 2,
+  ENTRY_TYPE_CONFIGURATION = 3,
+}
+
+table EntryMeta {
+  term:long;
+  type:raft.fb.EntryType;
+  peers:[string];
+  data_len:long;
+  old_peers:[string];
+  user_conf:[ubyte];
+}
+
+table AppendEntriesRequest {
+  group_id:string (required);
+  server_id:string (required);
+  peer_id:string (required);
+  term:long;
+  prev_log_term:long;
+  prev_log_index:long;
+  entries:[raft.fb.EntryMeta];
+  committed_index:long;
+  crc32_type:uint;
+  crc32:uint;
+}
+
+table AppendEntriesResponse {
+  term:long;
+  success:bool;
+  last_log_index:long;
+  readonly:bool;
+}
+
+rpc_service RaftService {
+    append_entries(AppendEntriesRequest):AppendEntriesResponse;
+}
