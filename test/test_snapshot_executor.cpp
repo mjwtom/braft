@@ -508,4 +508,65 @@ TEST_F(SnapshotExecutorTest, retry_request_with_throttle) {
     ASSERT_EQ(0, executor.snapshot_storage()->close(reader));
 }
 
+// Stands for the copier created by fetch_snapshot().
+class CancelCountingCopier : public braft::SnapshotCopier {
+public:
+    CancelCountingCopier() : cancel_times(0) {}
+    virtual void cancel() { ++cancel_times; }
+    virtual void join() {}
+    virtual SnapshotReader* get_reader() { return NULL; }
+    int cancel_times;
+};
+
+static void init_executor_for_fetching_test(SnapshotExecutor* executor,
+                                            FSMCaller* fsm_caller,
+                                            LogManager* log_manager) {
+    executor->_log_manager = log_manager;
+    executor->_fsm_caller = fsm_caller;
+    executor->_node = NULL;
+    executor->_term = 1;
+    executor->_snapshot_storage = new MockSnapshotStorage(".data/snapshot0");
+}
+
+TEST_F(SnapshotExecutorTest, do_snapshot_while_fetching_snapshot) {
+    MockFSMCaller fsm_caller;
+    MockLogManager log_manager;
+    SnapshotExecutor executor;
+    init_executor_for_fetching_test(&executor, &fsm_caller, &log_manager);
+
+    CancelCountingCopier copier;
+    executor._cur_copier = &copier;
+    braft::SynchronizedClosure done;
+    executor.do_snapshot(&done);
+    done.wait();
+    ASSERT_EQ(EBUSY, done.status().error_code());
+    ASSERT_FALSE(executor._saving_snapshot);
+    ASSERT_EQ(0, copier.cancel_times);
+    executor._cur_copier = NULL;
+}
+
+TEST_F(SnapshotExecutorTest, install_snapshot_while_fetching_snapshot) {
+    MockFSMCaller fsm_caller;
+    MockLogManager log_manager;
+    SnapshotExecutor executor;
+    init_executor_for_fetching_test(&executor, &fsm_caller, &log_manager);
+
+    CancelCountingCopier copier;
+    executor._cur_copier = &copier;
+    InstallArg arg;
+    arg.e = &executor;
+    arg.request.set_group_id("test");
+    arg.request.set_term(1);
+    arg.request.mutable_meta()->set_last_included_index(1);
+    arg.request.mutable_meta()->set_last_included_term(1);
+    arg.request.set_uri("remote://ip:port/reader_id");
+    install_thread(&arg);
+    ASSERT_TRUE(arg.cntl.Failed());
+    ASSERT_EQ(EBUSY, arg.cntl.ErrorCode());
+    ASSERT_EQ(1, copier.cancel_times);
+    ASSERT_TRUE(executor._downloading_snapshot.load() == NULL);
+    ASSERT_EQ(&copier, executor._cur_copier);
+    executor._cur_copier = NULL;
+}
+
 }  // namespace raft
